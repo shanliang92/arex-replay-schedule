@@ -38,7 +38,19 @@ class ExecutorServiceConfiguration implements Thread.UncaughtExceptionHandler {
                 threadFactory,
                 new ThreadPoolExecutor.CallerRunsPolicy());
     }
-
+    @Bean
+    public ExecutorService queryCountParallelPool() {
+        ThreadFactory threadFactory = new ThreadFactoryBuilder().setNameFormat("query-count-parallel-%d")
+                .setDaemon(true)
+                .setUncaughtExceptionHandler(this)
+                .build();
+        return new ThreadPoolExecutor(SEND_POOL_SIZE,
+                SEND_POOL_SIZE, KEEP_ALIVE_TIME,
+                TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(SEND_QUEUE_MAX_CAPACITY_SIZE),
+                threadFactory,
+                new ThreadPoolExecutor.CallerRunsPolicy());
+    }
     /**
      * This bean should be overridden according to the actual implementation of compare service
      */

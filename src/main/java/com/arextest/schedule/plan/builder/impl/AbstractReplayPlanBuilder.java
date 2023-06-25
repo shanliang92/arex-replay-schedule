@@ -13,13 +13,17 @@ import com.arextest.schedule.plan.builder.ReplayPlanBuilder;
 import com.arextest.schedule.service.DeployedEnvironmentService;
 import com.arextest.schedule.service.ReplayActionItemPreprocessService;
 import com.arextest.schedule.service.ReplayCaseRemoteLoadService;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 
 import javax.annotation.Resource;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -27,6 +31,7 @@ import java.util.stream.Collectors;
  * @author jmo
  * @since 2021/9/22
  */
+@Slf4j
 abstract class AbstractReplayPlanBuilder implements ReplayPlanBuilder {
     static final int APP_SUSPENDED_STATUS = -1;
     private final static String DEFAULT_PRO_SOURCE_ENV = "pro";
@@ -36,6 +41,8 @@ abstract class AbstractReplayPlanBuilder implements ReplayPlanBuilder {
     private ReplayCaseRemoteLoadService replayCaseRemoteLoadService;
     @Resource
     private ReplayActionItemPreprocessService replayActionItemPreprocessService;
+    @Resource
+    private ExecutorService queryCountParallelPool;
 
 
     @Override
@@ -106,15 +113,28 @@ abstract class AbstractReplayPlanBuilder implements ReplayPlanBuilder {
 
     @Override
     public int buildReplayCaseCount(List<ReplayActionItem> actionItemList) {
-        int sum = 0;
-        int actionCount;
-        for (int i = 0; i < actionItemList.size(); i++) {
-            ReplayActionItem actionItem = actionItemList.get(i);
-            actionCount = queryCaseCount(actionItem);
-            actionItem.setReplayCaseCount(actionCount);
-            sum += actionCount;
+        int sum;
+        if (actionItemList.size() == 1) {
+            ReplayActionItem actionItem = actionItemList.get(0);
+            sum = queryCaseCount(actionItem);
+            actionItem.setReplayCaseCount(sum);
+            return sum;
         }
+        long start = System.currentTimeMillis();
+        List<CompletableFuture<Void>> futureList = new ArrayList<>(actionItemList.size());
+        for (ReplayActionItem actionItem : actionItemList) {
+            CompletableFuture<Void> future =
+                    CompletableFuture.runAsync(() -> setCaseCount(actionItem), queryCountParallelPool);
+            futureList.add(future);
+        }
+        CompletableFuture.allOf(futureList.toArray(new CompletableFuture[0])).join();
+        sum = actionItemList.stream().mapToInt(ReplayActionItem::getReplayCaseCount).sum();
+        LOGGER.info("action count:{} case sum count: {},cost: {} ms", actionItemList.size(), sum, (System.currentTimeMillis() - start));
         return sum;
+    }
+
+    private void setCaseCount(ReplayActionItem actionItem) {
+        actionItem.setReplayCaseCount(queryCaseCount(actionItem));
     }
 
     abstract List<ReplayActionItem> getReplayActionList(BuildReplayPlanRequest request, PlanContext planContext);
